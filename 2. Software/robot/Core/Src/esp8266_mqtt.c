@@ -19,7 +19,7 @@ int esp8266_wait_response(const char *response, uint32_t timeout)
     while (HAL_GetTick() - start_time < timeout)
     {   
         HAL_UART_Receive(&huart3, (uint8_t *)uart3_rx_buff, UART3_RX_BUFF_SIZE, 1000);
-        LOG("%s\n", uart3_rx_buff);
+        // LOG("%s\n", uart3_rx_buff);
         if (strstr((char *)uart3_rx_buff, response) != NULL)
         {
             memset((char *)uart3_rx_buff, 0, UART3_RX_BUFF_SIZE);
@@ -103,15 +103,17 @@ int esp8266_subscribe_topic(const char *topic, uint8_t qos)
 }
 
 // ESP8266 发布 MQTT 消息
-int esp8266_publish_message(const char *topic, const char *message, uint8_t qos)
+int esp8266_publish_message(const char *topic, const char *message, uint8_t qos, uint32_t wait)
 {
-    char command[200];
-
+    char command[256];
     // 发布消息
     snprintf(command, sizeof(command), "AT+MQTTPUB=0,\"%s\",\"%s\",%d,0", topic, message, qos);
     esp8266_send_at_command(command);
-    if (!esp8266_wait_response("OK", 2000)) return 0;
-
+    if (wait != 0) {
+        if (!esp8266_wait_response("OK", wait)) {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -140,6 +142,7 @@ int esp8266_mqtt_init(void)
 
     HAL_UART_Receive_IT(&huart3, (uint8_t *)&uart3_rx_buff[uart3_rx_pos], 1); // 使能接收中断
 
+    LOG("ESP8266 MQTT service initialized successfully!\n");
     // // 发布消息
     // esp8266_publish_message(MQTT_TOPIC, "Hello MQTT!", 0);
     return 1;

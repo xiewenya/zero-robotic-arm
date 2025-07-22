@@ -23,16 +23,20 @@ extern "C" {
 #define ROBOT_CMD_LENGTH                    128
 #define ROBOT_CMD_QUEUE_TIMEOUT             100  /* 发送命令队列超时时间ms */
 
-#define ROBOT_CONTROL_TASK_STACK_SIZE       2048
+#define ROBOT_CONTROL_TASK_STACK_SIZE       4096
 #define ROBOT_CONTROL_TASK_PRIORITY         (osPriorityRealtime3)
 
 #define ROBOT_CMD_SERVICE_STACK_SIZE        2048
 #define ROBOT_CMD_SERVICE_PRIORITY          (osPriorityRealtime2)
 
-#define ROBOT_REMOTE_SERVICE_STACK_SIZE     2048
-#define ROBOT_REMOTE_SERVICE_PRIORITY       (osPriorityRealtime1)
-#define ROBOT_REMOTE_RESULT_NUM             3
-#define ROBOT_REMOTE_MAX_VELOCITY           (10.0f)  /* 最大速度mm/s */
+#define ROBOT_MQTT_SYNC_TASK_STACK_SIZE     2048
+#define ROBOT_MQTT_SYNC_TASK_PRIORITY       (osPriorityRealtime)
+
+// #define ROBOT_REMOTE_SERVICE_STACK_SIZE     2048
+// #define ROBOT_REMOTE_SERVICE_PRIORITY       (osPriorityRealtime1)
+// #define ROBOT_REMOTE_RESULT_NUM             3
+
+#define ROBOT_REMOTE_MAX_VELOCITY           (20.0f)  /* 最大速度mm/s */
 #define ROBOT_REMOTE_MAX_RPM                (5.0f)   /* 最大旋转角速度 rpm */
 #define ROBOT_REMOTE_TIME_RESOLUTION        (50)    /* 时间插值分辨率ms */
 
@@ -50,7 +54,8 @@ extern "C" {
 #define ROBOT_STATUS_LIMIT_ENABLE           0U /* 限位开关使能 */
 #define ROBOT_STATUS_LIMIT_HAPPENED         1U /* 限位开关触发 */
 #define ROBOT_STATUS_READY                  2U /* 当前已完成运动 */
-#define ROBOT_RMODE_ENABLE                  3U /* 远程控制使能 */
+#define ROBOT_STATUS_RMODE_ENABLE           3U /* 远程控制使能 */
+#define ROBOT_STATUS_MQTT_CONNECTED         4U /* MQTT连接状态 */
 
 #define ROBOT_STATUS_IS(x, status)          (((x) & (1 << status)) != 0)           /* 状态位是否触发 */
 #define ROBOT_STATUS_SET(x, status)         (x = ((x) | (1 << status)))            /* 设置状态位触发状态 */
@@ -61,13 +66,15 @@ extern "C" {
 #define ROBOT_PID_KP                        (10.0f) /* PID参数 */
 #define ROBOT_PID_KI                        (0.002f) /* PID参数 */
 #define ROBOT_PID_KD                        (0.0f) /* PID参数 */
-#define ROBOT_PID_PERIOD                    (10)   /* PID时间周期ms, 建议不小于10ms */
+#define ROBOT_PID_PERIOD                    (20)   /* PID时间周期ms, 建议不小于10ms */
 
 #define ROBOT_CAN_TIMEOUT                   (10) /* CAN超时时间ms */
 
 /* 误差范围 */
 #define ROBOT_ERROR_RANGE                   (1e-4f)
 #define ROBOT_JOINT_ANGLE_ERROR_RANGE       (1e-1f)
+
+#define ROBOT_MQTT_SYNC_TIME                (100) /* 同步时间间隔ms */
 
 enum motor_dir
 {
@@ -118,6 +125,7 @@ struct robot
 {
     osThreadId_t control_handle;
     osThreadId_t cmd_service_handle;
+    osThreadId_t mqtt_sync_task_handle;
     osThreadId_t remote_service_handle;
     float T[4][4];
     struct joint joints[ROBOT_MAX_JOINT_NUM];
@@ -150,6 +158,7 @@ enum robot_event_type
     ROBOT_SOFT_RESET_EVENT,         /* 软件复位事件：使机械臂复位到初始位置 */
     ROBOT_TEST_EVENT,
     ROBOT_REMOTE_CONTROL_EVENT,     /* 远程控制事件：根据远程控制指令控制机械臂运动 */
+    ROBOT_JOINTS_SYNC_EVENT,        /* 关节同步事件：同步机械臂关节状态 */
 };
 
 enum

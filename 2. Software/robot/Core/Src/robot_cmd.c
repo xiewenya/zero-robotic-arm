@@ -5,77 +5,104 @@
 #include "robot_cmd.h"
 #include "Emm_V5.h"
 
-static int robot_soft_reset_handle(uint32_t joint_id, float *param);
+static int robot_soft_reset_handle(float *param);
+static int robot_rel_rotate_handle(float *param);
+static int robot_auto_handle(float *param);
+static int robot_abs_rotate_handle(float *param);
+
 void robot_mqtt_handle(struct robot_cmd *cmd)
 {
-	float joints_angle[ROBOT_MAX_JOINT_NUM] = {0};
+	float param[6] = {0};
 	int strlen = 0;
-
-	int result = sscanf(cmd->cmd, "+MQTTSUBRECV:0,\"arm/change\",%d,MCU %f %f %f %f %f %f", &strlen, &joints_angle[0], &joints_angle[1], &joints_angle[2],
-			&joints_angle[3], &joints_angle[4], &joints_angle[5]);
+	int type = 0;
 	
-	if (result < 7) { // 解析失败
-		LOG("mqtt msg parse error: %s\n", cmd->cmd);
+	LOG("robot mqtt cmd: %s\n", cmd->cmd);
+
+	// [MCU][TYPE][ARG0-5]
+	int result = sscanf(cmd->cmd, "+MQTTSUBRECV:0,\"arm/change\",%d,[MCU][%d][%f %f %f %f %f %f]", &strlen, &type,
+			&param[0], &param[1], &param[2],
+			&param[3], &param[4], &param[5]);
+	
+	if (result < 8) { // 解析失败
 		return;
 	}
 	
-	for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
-		robot_send_abs_rotate_event(i, joints_angle[i]);
+	switch (type)
+	{
+		case ROBOT_JOINT_ABS_ROTATE:
+			robot_abs_rotate_handle(param);
+			break;
+		
+		case ROBOT_AUTO_EVENT:
+			robot_auto_handle(param);
+			break;
+		
+		case ROBOT_JOINTS_SYNC_EVENT:
+			robot_auto_handle(param);
+			break;
+		
+		default:
+			break;
 	}
 }
 
-static int robot_remote_enable_handle(uint32_t joint_id, float *param)
+static int robot_remote_enable_handle(float *param)
 {
-	(void)joint_id;
-	(void)param;
-	robot_soft_reset_handle(joint_id, param);	/* 复位 */
-	ROBOT_STATUS_SET(g_robot.status, ROBOT_RMODE_ENABLE);
+	robot_soft_reset_handle(param);	/* 复位 */
+	ROBOT_STATUS_SET(g_robot.status, ROBOT_STATUS_RMODE_ENABLE);
 	return robot_send_remote_event();
 }
 
-static int robot_remote_disable_handle(uint32_t joint_id, float *param)
+static int robot_remote_disable_handle(float *param)
 {
-	(void)joint_id;
 	(void)param;
-	ROBOT_STATUS_CLEAR(g_robot.status, ROBOT_RMODE_ENABLE);
-	robot_soft_reset_handle(joint_id, param);	/* 复位 */
+	ROBOT_STATUS_CLEAR(g_robot.status, ROBOT_STATUS_RMODE_ENABLE);
+	robot_soft_reset_handle(param);	/* 复位 */
 	return pdPASS;	
 }
 
-static int robot_rel_rotate_handle(uint32_t joint_id, float *param)
+static int robot_rel_rotate_handle(float *param)
 {
-	return robot_send_rel_rotate_event(joint_id, param[0]);
+	uint32_t joint_id = (uint32_t)param[0];
+	return robot_send_rel_rotate_event(joint_id, param[1]);
 }
 
-static int robot_auto_handle(uint32_t joint_id, float *param)
+static int robot_abs_rotate_handle(float *param)
 {
-	(void)joint_id;
+	uint32_t joint_id = (uint32_t)param[0];
+	return robot_send_abs_rotate_event(joint_id, param[1]);
+}
+
+static int robot_auto_handle(float *param)
+{
 	return robot_send_auto_event((struct position *)param);
 }
 
-static int robot_hard_reset_handle(uint32_t joint_id, float *param)
+static int robot_joints_sync_handle(float *param)
 {
-	(void)joint_id;
+	return robot_send_auto_event((struct position *)param);
+}
+
+static int robot_hard_reset_handle(float *param)
+{
 	(void)param;
 	return robot_send_reset_event(true);	
 }
 
-static int robot_soft_reset_handle(uint32_t joint_id, float *param)
+static int robot_soft_reset_handle(float *param)
 {
-	(void)joint_id;
 	(void)param;
 	return robot_send_reset_event(false);	
 }
 
-static int robot_time_func_handle(uint32_t joint_id, float *param)
+static int robot_time_func_handle(float *param)
 {
-	(void)joint_id;
 	return robot_send_time_func_event(param[0] * 1000);
 }
 
-static int robot_remote_event_handle(uint32_t joint_id, float *param)
+static int robot_remote_event_handle(float *param)
 {
-	if (!ROBOT_STATUS_IS(g_robot.status, ROBOT_RMODE_ENABLE)) {
+	if (!ROBOT_STATUS_IS(g_robot.status, ROBOT_STATUS_RMODE_ENABLE)) {
 		return pdPASS;
 	}
 
@@ -96,13 +123,12 @@ static int robot_remote_event_handle(uint32_t joint_id, float *param)
 	return pdPASS;
 }
 
-static int robot_zero_handle(uint32_t joint_id, float *param)
+static int robot_zero_handle(float *param)
 {
-	(void)joint_id;
 	(void)param;
 	LOG("robot reset zero.\n");
 	for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
-		Emm_V5_Reset_CurPos_To_Zero(joint_id + 1);
+		Emm_V5_Reset_CurPos_To_Zero(i + 1);
 		vTaskDelay(10);
 	}
 	return pdPASS;
@@ -117,13 +143,12 @@ static struct robot_cmd_info robot_uart1_cmd_table[] = {
 	{"hard_reset", robot_hard_reset_handle},
 	{"soft_reset", robot_soft_reset_handle},
 	{"zero", robot_zero_handle},
-	{"time_func", robot_time_func_handle},
+	// {"time_func", robot_time_func_handle},
 	{NULL, NULL},
 };
 
 void robot_uart1_handle(struct robot_cmd *rb_cmd)
 {
-	static uint32_t target_joint_id = 0;
 	static char event_type[20] = {0};
 	float param[6] = {0};
 	char *cmd = rb_cmd->cmd;
@@ -136,17 +161,11 @@ void robot_uart1_handle(struct robot_cmd *rb_cmd)
         return;
     }
 
-	if ((strcmp(event_type, "joint") == 0) && (param[0] > 0)) {
-        target_joint_id = param[0] - 1;
-        LOG("set target joint id: %u\n", target_joint_id);
-        return;
-    }
-
 	for (int i = 0; robot_uart1_cmd_table[i].event_type != NULL; i++) {
 		if (strcmp(event_type, robot_uart1_cmd_table[i].event_type) == 0) {
-			ret = robot_uart1_cmd_table[i].cmd_func(target_joint_id, param);
+			ret = robot_uart1_cmd_table[i].cmd_func(param);
 			if (ret != pdPASS) {
-				LOG("[ERROR] [jid:%d] event_type:%s param:%.2f %.2f %.2f\n", target_joint_id, event_type, param[0], param[1], param[2]);
+				LOG("[ERROR] [jid:%d] event_type:%s param:%.2f %.2f %.2f\n", event_type, param[0], param[1], param[2]);
 				return;
 			}
 			return;

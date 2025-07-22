@@ -10,7 +10,7 @@ extern "C" {
 struct robot_cmd_info
 {
     char *event_type;
-    int (*cmd_func)(uint32_t joint_id ,float *args);
+    int (*cmd_func)(float *args);
 };
 
 extern void robot_mqtt_handle(struct robot_cmd *rb_cmd);

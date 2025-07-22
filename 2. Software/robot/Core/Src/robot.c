@@ -59,6 +59,8 @@ static int time_func_circle(uint32_t time_ms, struct position *pos);
 static int robot_pid_run(struct position *path, int path_size, float *result);
 static void robot_pid_one_period(float *target_angle, float *intg_error, float *pre_error, float *total_error, int joint_num);
 static int robot_pid_remote(void);
+static int robot_mqtt_joints_sync(void);
+static void robot_joint_stop_from_isr(uint8_t joint_id);
 
 static robot_time_func g_robot_time_func = time_func_circle; /* 时间函数 */
 
@@ -176,7 +178,7 @@ static void robot_joint_limit_happend(uint8_t joint_id)
 	}
 
 	// 该函数仅会在中断中调用，且不存在多个中断同时并发设置一个关节状态位的情况，因此无需使用临界区保护
-	robot_joint_stop(joint_id); // 关节停止
+	robot_joint_stop_from_isr(joint_id);
 	ROBOT_STATUS_SET(g_robot.joints[joint_id].status, ROBOT_STATUS_LIMIT_HAPPENED);
 
 	struct robot_event event = {0};
@@ -256,6 +258,7 @@ static void robot_joint_hard_reset(void)
 	g_robot.cur_pos.x = 0;
 	g_robot.cur_pos.y = 0;
 	g_robot.cur_pos.z = 0;
+	robot_mqtt_joints_sync();
 }
 
 static int robot_angle_map(float angle, float min_angle, float max_angle, float *result)
@@ -329,6 +332,7 @@ static void robot_joint_soft_reset(void)
 	g_robot.cur_pos.x = 0;
 	g_robot.cur_pos.y = 0;
 	g_robot.cur_pos.z = 0;
+	robot_mqtt_joints_sync();
 }
 
 static struct position *robot_time_func_path_interpolation(uint32_t time_limit_ms, int *size)
@@ -549,6 +553,7 @@ static int robot_pid_run(struct position *path, int path_size, float *result)
 		while(HAL_GetTick() < node_end_time) { // 等待本次path node结束
 			robot_pid_one_period(target_angle, intg_diff, pre_diff, total_error, 6);
 		}
+		robot_mqtt_joints_sync();
 	}
 
 	for (int j = 0; j < ROBOT_MAX_JOINT_NUM; j++) {
@@ -560,6 +565,15 @@ static int robot_pid_run(struct position *path, int path_size, float *result)
 	}
 	LOG("\nrobot pid run finished!!\n");
 	return 0;
+}
+
+static void robot_joints_sync_to(struct robot_event *event)
+{
+	for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
+		robot_joint_rotate_to(i, DIR_POSITIVE, event->param[i],
+					ROBOT_JOINT_DEFAULT_VELOCITY, ROBOT_JOINT_DEFAULT_ACCELERATION, true);
+		g_robot.joints[i].current_angle = event->param[i]; // 更新当前角度
+	}
 }
 
 /**
@@ -617,6 +631,10 @@ static void robot_control_task(void *arg)
 				LOG("ROBOT_REMOTE_CONTROL_EVENT\n");
 				robot_pid_remote();
 				break;
+			case ROBOT_JOINTS_SYNC_EVENT:
+				LOG("ROBOT_JOINTS_SYNC_EVENT\n");
+				robot_joints_sync_to(&event);
+				break;
 			default:
 				LOG("robot event type error\n");
         }
@@ -665,7 +683,7 @@ static int robot_pid_remote(void)
 	LOG("robot into remote mode!!!!\n");
 
 	end_time = HAL_GetTick();
-	while(ROBOT_STATUS_IS(g_robot.status, ROBOT_RMODE_ENABLE)) {
+	while(ROBOT_STATUS_IS(g_robot.status, ROBOT_STATUS_RMODE_ENABLE)) {
 		end_time += ROBOT_REMOTE_TIME_RESOLUTION; // 本次路径跟踪结束时间, 为绝对时间
 
 		// 更新目标位置
@@ -770,6 +788,18 @@ void robot_init(void)
 	// }
 }
 
+int robot_send_joints_sync_event(float *angles)
+{
+	if (g_robot.event_queue == NULL) {
+		return -1;	
+	}
+
+	struct robot_event event = {0};
+	event.type = ROBOT_JOINTS_SYNC_EVENT;
+	memcpy(event.param, angles, sizeof(float) * ROBOT_MAX_JOINT_NUM);
+	return (int)xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
+}
+
 int robot_send_rel_rotate_event(uint8_t joint_id, float angle)
 {
 	struct robot_event event = {0};
@@ -854,6 +884,53 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
    __HAL_GPIO_EXTI_CLEAR_IT(GPIO_Pin); // 清除中断标志位, 减少按键抖动导致的误触发
 }
 
+static int robot_mqtt_joints_sync(void)
+{
+#if defined(ROBOT_MQTT_ENABLE) && (ROBOT_MQTT_ENABLE == 1)
+	char msg[256] = {0};
+	snprintf(msg, sizeof(msg), "[PC][%d][%.2f %.2f %.2f %.2f %.2f %.2f]", ROBOT_JOINTS_SYNC_EVENT,
+				g_robot.joints[0].current_angle, g_robot.joints[1].current_angle,
+				g_robot.joints[2].current_angle, g_robot.joints[3].current_angle,
+				g_robot.joints[4].current_angle, g_robot.joints[5].current_angle);
+	return esp8266_publish_message(MQTT_TOPIC, msg, 0, 0);
+#else
+	return 0;
+#endif
+}
+
+#if defined(ROBOT_MQTT_ENABLE) && (ROBOT_MQTT_ENABLE == 1)
+//static void robot_mqtt_sync_task(void)
+//{
+//	vTaskDelay(1000); // 等待esp8266初始化完成
+//
+//	while (1) {
+//		for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
+//			robot_update_current_angle(i); // 更新当前角度
+//		}
+//
+//		int ret = robot_mqtt_joints_sync();
+//		if (ret == 0) {
+//			LOG("robot mqtt sync failed, ret:%d\n", ret);
+//		}
+//		vTaskDelay(ROBOT_MQTT_SYNC_TIME);
+//	}
+//}
+
+//static int robot_mqtt_sync_task_init(void)
+//{
+//	// 创建低优先级任务，定期往MQTT服务器同步关节角度
+//  	osThreadAttr_t task_attributes = { .name = "robot_mqtt_sync_task",
+//                                     .stack_size = ROBOT_MQTT_SYNC_TASK_STACK_SIZE,
+//                                     .priority = ROBOT_MQTT_SYNC_TASK_PRIORITY};
+//  	g_robot.mqtt_sync_task_handle = osThreadNew((osThreadFunc_t)robot_mqtt_sync_task, NULL, &task_attributes);
+//	if (g_robot.mqtt_sync_task_handle == NULL) {
+//		LOG("create robot mqtt sync task failed\n");
+//		return -1;
+//	}
+//	return 0;
+//}
+#endif	// defined(ROBOT_MQTT_ENABLE) && (ROBOT_MQTT_ENABLE == 1)
+
 void robot_cmd_service(void)
 {
 	struct robot_cmd rb_cmd = {0};
@@ -867,6 +944,13 @@ void robot_cmd_service(void)
 		LOG("robot mqtt service init failed\n");
 		return;	
 	}
+
+	// ret = robot_mqtt_sync_task_init();
+	// if (ret != 0) {
+	// 	LOG("robot mqtt sync task init failed\n");
+	// 	return;	
+	// }
+
 	LOG("robot mqtt service init successed\n");
 #endif
 
@@ -975,6 +1059,25 @@ static int robot_update_current_angle(uint8_t joint_id)
 }
 
 static void robot_joint_stop(uint8_t joint_id)
+{
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	uint32_t start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			LOG("joint %u stop timeout.\n", joint_id);
+			xTaskResumeAll();
+			return 1;
+		}
+		Emm_V5_Stop_Now(joint_id + 1, false);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	g_robot.joints[joint_id].velocity = 0;
+	return 0;
+}
+
+static void robot_joint_stop_from_isr(uint8_t joint_id)
 {
 	Emm_V5_Stop_Now(joint_id + 1, false);
 	g_robot.joints[joint_id].velocity = 0;

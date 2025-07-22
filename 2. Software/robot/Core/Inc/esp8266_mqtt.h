@@ -9,7 +9,7 @@
 
 // 定义 MQTT 信息
 #define MQTT_SERVER     "41wm32327tp1.vicp.fun"
-#define MQTT_PORT       50802
+#define MQTT_PORT       34881
 #define MQTT_CLIENT_ID  "xiegeng_nb"
 #define MQTT_TOPIC      "arm/change"
 #define MQTT_USERNAME   "admin0"
@@ -26,7 +26,7 @@ int esp8266_connect_mqtt(const char *server, uint16_t port, const char *client_i
 // ESP8266 订阅 MQTT 主题
 int esp8266_subscribe_topic(const char *topic, uint8_t qos);
 // ESP8266 发布 MQTT 消息
-int esp8266_publish_message(const char *topic, const char *message, uint8_t qos);
+int esp8266_publish_message(const char *topic, const char *message, uint8_t qos, uint32_t wait);
 // 初始化 ESP8266
 int esp8266_mqtt_init(void);
 
