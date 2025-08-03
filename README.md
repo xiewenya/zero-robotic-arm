@@ -61,6 +61,12 @@ STM32CubeMX用于硬件外设初始化, STM32CubeIDE我一般用来DEBUG和程�
 5.  PID控制
 6.  MQTT网络协议
 ____
+### 硬件链接
+<img src="./4. Other/Images/circuit_link.jpg" width="400" height="350">
+
+<img src="./4. Other/Images/mcu.jpg" width="400" height="350">
+
+____
 ### 仿真模型
 本项目的运动学逆解推理和仿真验证均使用MATLAB R2023a。
 核心文件包括：
@@ -68,6 +74,8 @@ ____
 2. Simulink/model_v1.1/URDF_XG_Robot_Arm_Urdf_V1_1 机械臂urdf文件
 3. Simulink/URDF_XG_Robot_Arm_Urdf_Control_V3.slx 机械臂运动学逆解simscape仿真验证模型
 4. Simulink/robot_run.m URDF_XG_Robot_Arm_Urdf_Control_V3.slx的一键启动脚本
+<img src="./4. Other/Images/simulink.jpg" width="620" height="350">
+
 ____
 ### 待改进点
 1. 行星减速器旷量较大, 存在晃动。（还是买太便宜了😝）
