@@ -4,16 +4,16 @@
 #include "stm32f4xx_hal.h"
 
 // 定义 WiFi 信息
-#define WIFI_SSID       "小谢与小李的家"
-#define WIFI_PASSWORD   "XGljh246810"
+#define WIFI_SSID       "xxxxxx"
+#define WIFI_PASSWORD   "xxxxxx"
 
 // 定义 MQTT 信息
-#define MQTT_SERVER     "41wm32327tp1.vicp.fun"
-#define MQTT_PORT       34881
-#define MQTT_CLIENT_ID  "xiegeng_nb"
-#define MQTT_TOPIC      "arm/change"
-#define MQTT_USERNAME   "admin0"
-#define MQTT_PASSWORD   "123456"
+#define MQTT_SERVER     "xxx.xxx.xxx"       // 替换为实际的 MQTT 服务器地址
+#define MQTT_PORT       123                 // 替换为实际的 MQTT 服务器端口        
+#define MQTT_CLIENT_ID  "xxxxxx"            // 替换为实际的 MQTT 客户端 ID
+#define MQTT_TOPIC      "xxxx"              // 替换为实际的 MQTT 主题
+#define MQTT_USERNAME   "xxxx"              // 替换为实际的 MQTT 用户名
+#define MQTT_PASSWORD   "xxxx"              // 替换为实际的 MQTT 密码
 
 // 发送 AT 指令
 void esp8266_send_at_command(const char *command);
