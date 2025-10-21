@@ -21,13 +21,13 @@ B站: [【开源】为了跟上大佬们的步伐，我决定从零到一做个�
 - 机器人运动学逆解 (已完成，2025-07-09)
 - PID控制 (已完成，2025-07-09)
 - 串口控制 （已完成，2025-07-09）
-- 手柄控制 （开发中...）
-- MQTT远程控制
+- 手柄控制 （已完成，2025-07-09）
+- MQTT远程控制 
 - WEB可视化平台
 - 语音识别
 - 语音合成
 - 大模型接入
-- 数据收集及强化学习
+- 数据收集及强化学习 （已完成，2025-10-21）
 ____
 ### 目录结构
 1.  Model: 机械臂三维模型文件
@@ -35,6 +35,7 @@ ____
     2.1. robot: 机械臂嵌入式控制代码
 3.  Simulink： 运动学仿真模型
 4.  BOM: 物料清单
+5.  Deep LR: 深度强化学习
 ____
 ### 物料清单
 所有物料的型号、数量以及购买链接已全部整理到BOM.xlsx中，整个机械臂的物料成本仅需1300左右。
@@ -68,11 +69,13 @@ STM32CubeMX用于硬件外设初始化, STM32CubeIDE我一般用来DEBUG和程�
 
 |    命令    |    参数    |    功能    |
 | :--------: | :--------: | :--------: |
-|      sync  |      0 0 0 0 0 0  |   每个关节的旋转指定角度, 支持负数   |
+|      rel_rotate  |      joint_id angle  |   指定关节的旋转指定角度, 支持负数   |
 |      hard_reset  |      \  |   硬复位：各关节复位, 直到限位开关触发   |
 |      soft_reset  |      \  |   软复位：各关节复位至零点   |
 |      zero  |      \  |   将当前位置设置为零点，软复位将基于当前位置进行复位   |
 |      auto  |      x y z  |   机械臂末端移动到指定位置(x,y,z), 注意坐标方向   |
+
+具体参考：SoftWare/robot/Core/robot_cmd.c的robot_uart1_cmd_table数组定义
 ____
 ### 硬件链接
 <img src="./4. Other/Images/circuit_link.jpg" width="400" height="350">
@@ -89,6 +92,17 @@ ____
 4. Simulink/robot_run.m URDF_XG_Robot_Arm_Urdf_Control_V3.slx的一键启动脚本
 <img src="./4. Other/Images/simulink.jpg" width="620" height="350">
 
+### 深度强化学习
+本项目使用了 TD3 深度强化学习算法控制机械臂的末端跟踪随机目标位置。物理仿真环境使用Mujoco, 强化学习框架使用Stable-Baselines3，当然我自己也实现了一个裸写了一个TD3算法，大家可自行参考（没验证过哦~, 但我感觉应该没啥问题, 哈哈哈哈）
+核心文件包括：
+1. Deep_RL/robot_arm_env.py 环境惩罚规则代码
+2. Deep_RL/train_robot_arm.py 训练代码
+3. Deep_RL/robot_arm_mujoco.xml mujoco模型定义
+4. Deep_RL/mtd3_robot_arm.ipynb 我写的td3算法😄
+
+训练指令：python train_robot_arm.py
+测试指令：python train_robot_arm.py --test --model-path ./logs/best_model/best_model.zip --normalize-path ./logs/best_model/vec_normalize.pkl --episodes 50
+<img src="./4. Other/Images/RL.jpg" width="620" height="350">
 ____
 ### 待改进点
 1. 行星减速器旷量较大, 存在晃动。（还是买太便宜了😝）
