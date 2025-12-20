@@ -1,0 +1,10 @@
+diff a/2. Software/robot/robot.ioc b/2. Software/robot/robot.ioc	(rejected hunks)
+@@ -124,7 +125,7 @@ PB9.Signal=CAN1_TX
+ PC5.GPIOParameters=PinState,GPIO_Label
+ PC5.GPIO_Label=RED_LED
+ PC5.Locked=true
+-PC5.PinState=GPIO_PIN_RESET
++PC5.PinState=GPIO_PIN_SET
+ PC5.Signal=GPIO_Output
+ PD0.GPIOParameters=GPIO_PuPd,GPIO_Label,GPIO_ModeDefaultEXTI
+ PD0.GPIO_Label=JOINT_LIMIT_1

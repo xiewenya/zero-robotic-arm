@@ -1,0 +1,113 @@
+diff --git a/2. Software/robot/Core/Inc/stm32f4xx_hal_conf.h b/2. Software/robot/Core/Inc/stm32f4xx_hal_conf.h
+index b2939df..1f86d47 100644
+--- a/2. Software/robot/Core/Inc/stm32f4xx_hal_conf.h	
++++ b/2. Software/robot/Core/Inc/stm32f4xx_hal_conf.h	
+@@ -96,7 +96,7 @@
+   *        (when HSE is used as system clock source, directly or through the PLL).
+   */
+ #if !defined  (HSE_VALUE)
+-  #define HSE_VALUE    8000000U /*!< Value of the External oscillator in Hz */
++  #define HSE_VALUE    25000000U /*!< Value of the External oscillator in Hz */
+ #endif /* HSE_VALUE */
+ 
+ #if !defined  (HSE_STARTUP_TIMEOUT)
+diff --git a/2. Software/robot/Core/Src/freertos.c b/2. Software/robot/Core/Src/freertos.c
+index 9914ca3..179f3d0 100644
+--- a/2. Software/robot/Core/Src/freertos.c	
++++ b/2. Software/robot/Core/Src/freertos.c	
+@@ -118,7 +118,8 @@ void StartDefaultTask(void *argument)
+   robot_init();
+   for(;;)
+   {
+-    osDelay(1);
++	HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
++    osDelay(500);
+   }
+   /* USER CODE END StartDefaultTask */
+ }
+diff --git a/2. Software/robot/Core/Src/main.c b/2. Software/robot/Core/Src/main.c
+index f980844..7371753 100644
+--- a/2. Software/robot/Core/Src/main.c	
++++ b/2. Software/robot/Core/Src/main.c	
+@@ -154,8 +154,8 @@ void SystemClock_Config(void)
+   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+-  RCC_OscInitStruct.PLL.PLLM = 4;
+-  RCC_OscInitStruct.PLL.PLLN = 168;
++  RCC_OscInitStruct.PLL.PLLM = 25;
++  RCC_OscInitStruct.PLL.PLLN = 336;
+   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+   RCC_OscInitStruct.PLL.PLLQ = 7;
+   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+diff --git a/2. Software/robot/robot.ioc b/2. Software/robot/robot.ioc
+index 62aa7da..837b79d 100644
+--- a/2. Software/robot/robot.ioc	
++++ b/2. Software/robot/robot.ioc	
+@@ -5,10 +5,11 @@ CAD.provider=
+ CAN1.ABOM=DISABLE
+ CAN1.AWUM=ENABLE
+ CAN1.BS1=CAN_BS1_4TQ
++CAN1.BS2=CAN_BS2_1TQ
+ CAN1.CalculateBaudRate=499999
+ CAN1.CalculateTimeBit=2000
+ CAN1.CalculateTimeQuantum=333.33333333333337
+-CAN1.IPParameters=CalculateTimeQuantum,CalculateTimeBit,CalculateBaudRate,Prescaler,BS1,Mode,ABOM,AWUM
++CAN1.IPParameters=CalculateTimeQuantum,CalculateTimeBit,CalculateBaudRate,Prescaler,BS1,Mode,ABOM,AWUM,BS2
+ CAN1.Mode=CAN_MODE_NORMAL
+ CAN1.Prescaler=14
+ Dma.Request0=USART3_RX
+@@ -124,7 +125,7 @@ PB9.Signal=CAN1_TX
+ PC5.GPIOParameters=PinState,GPIO_Label
+ PC5.GPIO_Label=RED_LED
+ PC5.Locked=true
+-PC5.PinState=GPIO_PIN_RESET
++PC5.PinState=GPIO_PIN_SET
+ PC5.Signal=GPIO_Output
+ PD0.GPIOParameters=GPIO_PuPd,GPIO_Label,GPIO_ModeDefaultEXTI
+ PD0.GPIO_Label=JOINT_LIMIT_1
+@@ -181,7 +182,7 @@ ProjectManager.FreePins=false
+ ProjectManager.HalAssertFull=false
+ ProjectManager.HeapSize=0x200
+ ProjectManager.KeepUserCode=true
+-ProjectManager.LastFirmware=true
++ProjectManager.LastFirmware=false
+ ProjectManager.LibraryCopy=1
+ ProjectManager.MainLocation=Core/Src
+ ProjectManager.NoMain=false
+@@ -211,27 +212,27 @@ RCC.EthernetFreq_Value=168000000
+ RCC.FCLKCortexFreq_Value=168000000
+ RCC.FamilyName=M
+ RCC.HCLKFreq_Value=168000000
+-RCC.HSE_VALUE=8000000
++RCC.HSE_VALUE=25000000
+ RCC.HSI_VALUE=16000000
+-RCC.I2SClocksFreq_Value=192000000
++RCC.I2SClocksFreq_Value=96000000
+ RCC.IPParameters=48MHZClocksFreq_Value,AHBFreq_Value,APB1CLKDivider,APB1Freq_Value,APB1TimFreq_Value,APB2CLKDivider,APB2Freq_Value,APB2TimFreq_Value,CortexFreq_Value,EthernetFreq_Value,FCLKCortexFreq_Value,FamilyName,HCLKFreq_Value,HSE_VALUE,HSI_VALUE,I2SClocksFreq_Value,LSE_VALUE,LSI_VALUE,MCO2PinFreq_Value,PLLCLKFreq_Value,PLLM,PLLN,PLLQ,PLLQCLKFreq_Value,PLLSourceVirtual,RTCFreq_Value,RTCHSEDivFreq_Value,SYSCLKFreq_VALUE,SYSCLKSource,VCOI2SOutputFreq_Value,VCOInputFreq_Value,VCOOutputFreq_Value,VcooutputI2S
+ RCC.LSE_VALUE=32768
+ RCC.LSI_VALUE=32000
+ RCC.MCO2PinFreq_Value=168000000
+ RCC.PLLCLKFreq_Value=168000000
+-RCC.PLLM=4
+-RCC.PLLN=168
++RCC.PLLM=25
++RCC.PLLN=336
+ RCC.PLLQ=7
+ RCC.PLLQCLKFreq_Value=48000000
+ RCC.PLLSourceVirtual=RCC_PLLSOURCE_HSE
+ RCC.RTCFreq_Value=32000
+-RCC.RTCHSEDivFreq_Value=4000000
++RCC.RTCHSEDivFreq_Value=12500000
+ RCC.SYSCLKFreq_VALUE=168000000
+ RCC.SYSCLKSource=RCC_SYSCLKSOURCE_PLLCLK
+-RCC.VCOI2SOutputFreq_Value=384000000
+-RCC.VCOInputFreq_Value=2000000
++RCC.VCOI2SOutputFreq_Value=192000000
++RCC.VCOInputFreq_Value=1000000
+ RCC.VCOOutputFreq_Value=336000000
+-RCC.VcooutputI2S=192000000
++RCC.VcooutputI2S=96000000
+ SH.GPXTI0.0=GPIO_EXTI0
+ SH.GPXTI0.ConfNb=1
+ SH.GPXTI1.0=GPIO_EXTI1

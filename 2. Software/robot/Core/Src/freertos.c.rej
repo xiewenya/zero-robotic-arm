@@ -1,0 +1,11 @@
+diff a/2. Software/robot/Core/Src/freertos.c b/2. Software/robot/Core/Src/freertos.c	(rejected hunks)
+@@ -118,7 +118,8 @@ void StartDefaultTask(void *argument)
+   robot_init();
+   for(;;)
+   {
+-    osDelay(1);
++	HAL_GPIO_TogglePin(BLUE_LED_GPIO_Port, BLUE_LED_Pin);
++    osDelay(500);
+   }
+   /* USER CODE END StartDefaultTask */
+ }
