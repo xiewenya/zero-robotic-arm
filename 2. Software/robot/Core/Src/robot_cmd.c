@@ -95,6 +95,18 @@ static int robot_soft_reset_handle(float *param)
 	return robot_send_reset_event(false);	
 }
 
+static int robot_joint_hard_reset_handle(float *param)
+{
+	uint8_t joint_id = (uint8_t)param[0];
+	return robot_send_joint_reset_event(joint_id, true);
+}
+
+static int robot_joint_soft_reset_handle(float *param)
+{
+	uint8_t joint_id = (uint8_t)param[0];
+	return robot_send_joint_reset_event(joint_id, false);
+}
+
 static int robot_time_func_handle(float *param)
 {
 	return robot_send_time_func_event(param[0] * 1000);
@@ -134,14 +146,77 @@ static int robot_zero_handle(float *param)
 	return pdPASS;
 }
 
+static int robot_read_angle_handle(float *param)
+{
+	uint8_t joint_id = (uint8_t)param[0];
+	if (joint_id >= ROBOT_MAX_JOINT_NUM) {
+		LOG("ERROR: joint_id %d out of range\n", joint_id);
+		return pdFAIL;
+	}
+	
+	// 发送TEST事件读取指定关节角度
+	struct robot_event event = {0};
+	event.type = ROBOT_TEST_EVENT;
+	event.joint_id = joint_id;
+	xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
+	
+	// 延时等待读取完成
+	vTaskDelay(50);
+	
+	// 打印当前角度
+	LOG("Joint %d current angle: %.2f degrees\n", joint_id, g_robot.joints[joint_id].current_angle);
+	return pdPASS;
+}
+
+static int robot_read_all_angles_handle(float *param)
+{
+	(void)param;
+	LOG("Reading all joint angles:\n");
+	
+	for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
+		// 发送TEST事件读取角度
+		struct robot_event event = {0};
+		event.type = ROBOT_TEST_EVENT;
+		event.joint_id = i;
+		xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
+		vTaskDelay(50);
+		
+		LOG("  Joint %d: %.2f°\n", i, g_robot.joints[i].current_angle);
+	}
+	
+	LOG("All angles read complete.\n");
+	return pdPASS;
+}
+
+static int robot_read_status_handle(float *param)
+{
+	uint8_t joint_id = (uint8_t)param[0];
+	if (joint_id >= ROBOT_MAX_JOINT_NUM) {
+		LOG("ERROR: joint_id %d out of range\n", joint_id);
+		return pdFAIL;
+	}
+	
+	// 发送READ_STATUS事件读取电机状态
+	struct robot_event event = {0};
+	event.type = ROBOT_READ_STATUS_EVENT;
+	event.joint_id = joint_id;
+	return (int)xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
+}
+
 static struct robot_cmd_info robot_uart1_cmd_table[] = {
 	{"remote_event", robot_remote_event_handle},
 	{"remote_enable", robot_remote_enable_handle},
 	{"remote_disable", robot_remote_disable_handle},
 	{"rel_rotate", robot_rel_rotate_handle},
+	{"abs_rotate", robot_abs_rotate_handle},
 	{"auto", robot_auto_handle},
 	{"hard_reset", robot_hard_reset_handle},
 	{"soft_reset", robot_soft_reset_handle},
+	{"joint_hard_reset", robot_joint_hard_reset_handle},
+	{"joint_soft_reset", robot_joint_soft_reset_handle},
+	{"read_angle", robot_read_angle_handle},
+	{"read_all_angles", robot_read_all_angles_handle},
+	{"read_status", robot_read_status_handle},
 	{"zero", robot_zero_handle},
 	// {"time_func", robot_time_func_handle},
 	{NULL, NULL},

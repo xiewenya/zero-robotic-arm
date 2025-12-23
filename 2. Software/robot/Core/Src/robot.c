@@ -61,6 +61,7 @@ static void robot_pid_one_period(float *target_angle, float *intg_error, float *
 static int robot_pid_remote(void);
 static int robot_mqtt_joints_sync(void);
 static void robot_joint_stop_from_isr(uint8_t joint_id);
+static void robot_read_motor_status(uint8_t joint_id);
 
 static robot_time_func g_robot_time_func = time_func_circle; /* 时间函数 */
 
@@ -84,7 +85,7 @@ uint32_t robot_joint_veloccity_to(uint32_t joint_id, float velocity,\
     struct joint *joint = &g_robot.joints[joint_id];
 	
 	uint8_t dir = (velocity > 0) ? joint->postive_direction : !(joint->postive_direction);
-	ROBOT_STATUS_CLEAR(joint->status, ROBOT_STATUS_LIMIT_ENABLE);
+	// 保持限位开关始终启用以提供安全保护
 	uint32_t addr = joint_id + 1; // 各关节CAN地址从1开始
 
 	// 计算电机速度，单位：rpm. 驱动器会将_velocity/10作为真实速度，从而实现0.1RPM精度控制，因此计算时我们需要提前乘以10
@@ -229,6 +230,10 @@ static void robot_joint_reset(uint8_t joint_id)
     if (state == GPIO_PIN_SET) { // 限位开关已触发, 无需复位
         LOG("joint %d limit switch already happend\n", joint_id);
         Emm_V5_Reset_CurPos_To_Zero(joint_id + 1); // 关节复位
+        // 清除限位状态，允许后续运动
+        taskENTER_CRITICAL();
+        ROBOT_STATUS_CLEAR(g_robot.joints[joint_id].status, ROBOT_STATUS_LIMIT_HAPPENED);
+        taskEXIT_CRITICAL();
         return;
     }
 
@@ -240,6 +245,13 @@ static void robot_joint_reset(uint8_t joint_id)
 	}
     vTaskDelay(ROBOT_CAN_DELAY);
     Emm_V5_Reset_CurPos_To_Zero(joint_id + 1); // 关节复位
+    
+    // 复位完成后立即清除限位状态，不依赖异步事件处理
+    // 这样可以确保后续运动不受影响
+    taskENTER_CRITICAL();
+    ROBOT_STATUS_CLEAR(g_robot.joints[joint_id].status, ROBOT_STATUS_LIMIT_HAPPENED);
+    taskEXIT_CRITICAL();
+    LOG("joint %d reset complete, limit status cleared\n", joint_id);
 }
 
 /* 复位所有关节 */
@@ -297,6 +309,51 @@ static int robot_angle_map(float angle, float min_angle, float max_angle, float 
     return 0;
 }
 
+/* 单关节软件复位 */
+static void robot_single_joint_soft_reset(uint8_t joint_id)
+{
+	if (joint_id >= ROBOT_MAX_JOINT_NUM) {
+		LOG("ERROR: joint_id %d out of range\n", joint_id);
+		return;
+	}
+	
+	float angle = 0;
+	int ret = 0;
+	int dir = DIR_POSITIVE;
+	
+	robot_update_current_angle(joint_id);
+	ret = robot_angle_map(g_robot.joints[joint_id].current_angle, 
+						  g_joints_init[joint_id].min_angle, 
+						  g_joints_init[joint_id].max_angle, &angle);
+	if (ret != 0) {
+		LOG("robot angle map failed, joint_id:%d current_angle:%.2f\n", 
+			joint_id, g_robot.joints[joint_id].current_angle);
+		return;
+	}
+
+	if (angle > g_joints_init[joint_id].current_angle) {
+		dir = DIR_NEGATIVE;
+	}
+
+	if (g_joints_init[joint_id].min_angle == 0 && g_joints_init[joint_id].max_angle == 360) {
+		if (fabs(angle - g_joints_init[joint_id].current_angle) > 180) {
+			dir = -dir;
+		}
+	}
+	
+	LOG("Joint %d soft reset: current:%.2f -> target:%.2f, dir:%d\n", 
+		joint_id, angle, g_joints_init[joint_id].current_angle, dir);
+	
+	g_robot.joints[joint_id].current_angle = angle;
+	robot_joint_rotate_to(joint_id, dir, g_joints_init[joint_id].current_angle, 
+						  ROBOT_RESET_DEFAULT_VELOCITY, ROBOT_RESET_DEFAULT_ACCELERATION, true);
+	vTaskDelay(100);
+	g_robot.joints[joint_id].current_angle = g_joints_init[joint_id].current_angle;
+	
+	LOG("Joint %d soft reset complete\n", joint_id);
+}
+
+/* 全部关节软件复位 */
 static void robot_joint_soft_reset(void)
 {
 	float angle = 0;
@@ -615,15 +672,27 @@ static void robot_control_task(void *arg)
 				LOG("ROBOT_TIMIE_FUNC_EVENT\n");
 				robot_time_func_move((uint32_t)(event.param[0]));
 				break;
-			case ROBOT_HARD_RESET_EVENT:
-				LOG("ROBOT_HARD_RESET_EVENT\n");
-				robot_joint_hard_reset();
-				break;
-			case ROBOT_SOFT_RESET_EVENT:
-				LOG("ROBOT_SOFT_RESET_EVENT\n");
-				robot_joint_soft_reset();
-				break;
-			case ROBOT_TEST_EVENT:
+		case ROBOT_HARD_RESET_EVENT:
+			LOG("ROBOT_HARD_RESET_EVENT\n");
+			robot_joint_hard_reset();
+			break;
+		case ROBOT_SOFT_RESET_EVENT:
+			LOG("ROBOT_SOFT_RESET_EVENT\n");
+			robot_joint_soft_reset();
+			break;
+		case ROBOT_JOINT_HARD_RESET_EVENT:
+			LOG("[joint_id: %d] ROBOT_JOINT_HARD_RESET_EVENT\n", event.joint_id);
+			robot_joint_reset(event.joint_id);
+			break;
+		case ROBOT_JOINT_SOFT_RESET_EVENT:
+			LOG("[joint_id: %d] ROBOT_JOINT_SOFT_RESET_EVENT\n", event.joint_id);
+			robot_single_joint_soft_reset(event.joint_id);
+			break;
+		case ROBOT_READ_STATUS_EVENT:
+			LOG("[joint_id: %d] ROBOT_READ_STATUS_EVENT\n", event.joint_id);
+			robot_read_motor_status(event.joint_id);
+			break;
+		case ROBOT_TEST_EVENT:
 				LOG("ROBOT_RESET_EVENT\n");
 				robot_update_current_angle(event.joint_id);
 				break;
@@ -745,6 +814,11 @@ void robot_init(void)
     memcpy(g_robot.joints, g_joints_init, sizeof(g_joints_init));
     memcpy(g_robot.T, T_0_6_reset, sizeof(T_0_6_reset));
 
+	/* 启用所有关节的限位开关保护 */
+	for (int i = 0; i < ROBOT_MAX_JOINT_NUM; i++) {
+		ROBOT_STATUS_SET(g_robot.joints[i].status, ROBOT_STATUS_LIMIT_ENABLE);
+	}
+
 	g_robot.event_queue = xQueueCreate(ROBOT_MAX_EVENT_NUM, sizeof(struct robot_event));
     if (g_robot.event_queue == NULL) {
       	LOG("create robot event queue failed\n");
@@ -848,6 +922,23 @@ int robot_send_reset_event(bool hard_reset)
 		event.type = ROBOT_HARD_RESET_EVENT;	
 	} else {
 		event.type = ROBOT_SOFT_RESET_EVENT;
+	}
+	return (int)xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
+}
+
+int robot_send_joint_reset_event(uint8_t joint_id, bool hard_reset)
+{
+	if (joint_id >= ROBOT_MAX_JOINT_NUM) {
+		LOG("ERROR: joint_id %d out of range\n", joint_id);
+		return pdFAIL;
+	}
+	
+	struct robot_event event = {0};
+	event.joint_id = joint_id;
+	if (hard_reset) {
+		event.type = ROBOT_JOINT_HARD_RESET_EVENT;	
+	} else {
+		event.type = ROBOT_JOINT_SOFT_RESET_EVENT;
 	}
 	return (int)xQueueSendToBack(g_robot.event_queue, &event, ROBOT_CMD_QUEUE_TIMEOUT);
 }
@@ -1058,6 +1149,176 @@ static int robot_update_current_angle(uint8_t joint_id)
 	return 0;
 }
 
+/* 读取电机所有状态参数 */
+static void robot_read_motor_status(uint8_t joint_id)
+{
+	if (joint_id >= ROBOT_MAX_JOINT_NUM) {
+		LOG("ERROR: joint_id %d out of range\n", joint_id);
+		return;
+	}
+	
+	struct joint *joint = &g_robot.joints[joint_id];
+	uint8_t addr = joint_id + 1;
+	
+	LOG("\n========== Joint %d Motor Status ==========\n", joint_id);
+	LOG("Joint Configuration:\n");
+	LOG("  Initial Angle: %.2f°\n", g_joints_init[joint_id].current_angle);
+	LOG("  Angle Range: %.2f° ~ %.2f°\n", joint->min_angle, joint->max_angle);
+	LOG("  Reduction Ratio: %.2f:1\n", joint->reduction_ratio);
+	LOG("  Positive Direction: %s\n", joint->postive_direction == MOTOR_DIR_CW ? "CW" : "CCW");
+	LOG("  Reset Direction: %s\n", joint->reset_dir == DIR_POSITIVE ? "Positive" : "Negative");
+	
+	// 读取当前位置角度
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	uint32_t start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Current Position: TIMEOUT\n");
+			goto read_velocity;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_CPOS);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x36 && can.rxData[6] == 0x6b) {
+		int32_t pos = 0;
+		for (int i = 5; i >= 2; i--) {
+			pos += (int32_t)(((uint32_t)can.rxData[i]) << ((5 - i) << 3));
+		}
+		if (can.rxData[1] == 0x01) pos = -pos;
+		float angle = pos * 360.0 / 65536.0 / joint->reduction_ratio;
+		LOG("\nMotor Real-time Status:\n");
+		LOG("  Current Position (Raw): %ld pulses\n", pos);
+		LOG("  Current Angle: %.2f°\n", joint->current_angle);
+		LOG("  Motor Angle: %.2f°\n", angle);
+	}
+	
+read_velocity:
+	// 读取实时转速
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Velocity: TIMEOUT\n");
+			goto read_error;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_VEL);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x35 && can.rxData[4] == 0x6b) {
+		int16_t vel = (int16_t)((can.rxData[3] << 8) | can.rxData[2]);
+		if (can.rxData[1] == 0x01) vel = -vel;
+		LOG("  Velocity: %d RPM (%.2f °/s)\n", vel, vel * 6.0);
+	}
+	
+read_error:
+	// 读取位置误差
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Position Error: TIMEOUT\n");
+			goto read_flags;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_PERR);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x37 && can.rxData[4] == 0x6b) {
+		int16_t perr = (int16_t)((can.rxData[3] << 8) | can.rxData[2]);
+		if (can.rxData[1] == 0x01) perr = -perr;
+		float perr_angle = perr * 360.0 / 65536.0;
+		LOG("  Position Error: %d pulses (%.3f°)\n", perr, perr_angle);
+	}
+	
+read_flags:
+	// 读取状态标志位
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Status Flags: TIMEOUT\n");
+			goto read_vbus;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_FLAG);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x3A && can.rxData[3] == 0x6b) {
+		uint8_t flags = can.rxData[1];
+		LOG("\nStatus Flags:\n");
+		LOG("  Motor Enabled: %s\n", (flags & 0x01) ? "YES" : "NO");
+		LOG("  Position Reached: %s\n", (flags & 0x02) ? "YES" : "NO");
+		LOG("  Motor Stalled: %s\n", (flags & 0x04) ? "YES" : "NO");
+	}
+	
+read_vbus:
+	// 读取总线电压
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Bus Voltage: TIMEOUT\n");
+			goto read_current;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_VBUS);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x24 && can.rxData[3] == 0x6b) {
+		uint16_t vbus = (can.rxData[2] << 8) | can.rxData[1];
+		LOG("\nPower Status:\n");
+		LOG("  Bus Voltage: %.1f V\n", vbus / 10.0);
+	}
+	
+read_current:
+	// 读取相电流
+	vTaskSuspendAll();
+	can.rxFrameFlag = false;
+	start_tick = HAL_GetTick();
+	while(!can.rxFrameFlag) {
+		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
+			xTaskResumeAll();
+			LOG("  Phase Current: TIMEOUT\n");
+			goto read_end;
+		}
+		Emm_V5_Read_Sys_Params(addr, S_CPHA);
+		HAL_Delay(1);
+	}
+	xTaskResumeAll();
+	
+	if (can.rxData[0] == 0x27 && can.rxData[3] == 0x6b) {
+		int16_t current = (int16_t)((can.rxData[2] << 8) | can.rxData[1]);
+		LOG("  Phase Current: %d mA\n", current);
+	}
+	
+read_end:
+	// 读取限位开关状态
+	GPIO_PinState limit_state = HAL_GPIO_ReadPin(joint->limit_gpio_port, joint->limit_gpio_pin);
+	LOG("\nLimit Switch:\n");
+	LOG("  GPIO State: %s\n", limit_state == GPIO_PIN_SET ? "HIGH (Triggered)" : "LOW (Not Triggered)");
+	LOG("  Limit Enable: %s\n", ROBOT_STATUS_IS(joint->status, ROBOT_STATUS_LIMIT_ENABLE) ? "YES" : "NO");
+	LOG("  Limit Happened: %s\n", ROBOT_STATUS_IS(joint->status, ROBOT_STATUS_LIMIT_HAPPENED) ? "YES" : "NO");
+	
+	LOG("==========================================\n\n");
+}
+
 static void robot_joint_stop(uint8_t joint_id)
 {
 	vTaskSuspendAll();
@@ -1067,14 +1328,13 @@ static void robot_joint_stop(uint8_t joint_id)
 		if ((HAL_GetTick() - start_tick) > ROBOT_CAN_TIMEOUT) {
 			LOG("joint %u stop timeout.\n", joint_id);
 			xTaskResumeAll();
-			return 1;
+			return;
 		}
 		Emm_V5_Stop_Now(joint_id + 1, false);
 		HAL_Delay(1);
 	}
 	xTaskResumeAll();
 	g_robot.joints[joint_id].velocity = 0;
-	return 0;
 }
 
 static void robot_joint_stop_from_isr(uint8_t joint_id)

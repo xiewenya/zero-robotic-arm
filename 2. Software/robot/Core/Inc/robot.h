@@ -154,8 +154,11 @@ enum robot_event_type
     ROBOT_LIMIT_SWITCH_EVENT,       /* 限位开关事件：指定关节到达限位开关时触发事件 */
     ROBOT_AUTO_EVENT,               /* 自动事件：指定机械臂末端位置及姿态，算法自动控制各关节电机运动 */
     ROBOT_TIMIE_FUNC_EVENT,         /* 时间函数事件: 机械臂末端根据时间函数P(t)运动 */
-    ROBOT_HARD_RESET_EVENT,         /* 硬件复位事件：使限位开关将机械臂复位到初始位置 */
-    ROBOT_SOFT_RESET_EVENT,         /* 软件复位事件：使机械臂复位到初始位置 */
+    ROBOT_HARD_RESET_EVENT,         /* 硬件复位事件：使限位开关将所有关节复位到初始位置 */
+    ROBOT_SOFT_RESET_EVENT,         /* 软件复位事件：使所有关节复位到初始位置 */
+    ROBOT_JOINT_HARD_RESET_EVENT,   /* 单关节硬件复位事件：使用限位开关将指定关节复位 */
+    ROBOT_JOINT_SOFT_RESET_EVENT,   /* 单关节软件复位事件：将指定关节复位到初始位置 */
+    ROBOT_READ_STATUS_EVENT,        /* 读取电机状态事件：读取指定关节的所有状态参数 */
     ROBOT_TEST_EVENT,
     ROBOT_REMOTE_CONTROL_EVENT,     /* 远程控制事件：根据远程控制指令控制机械臂运动 */
     ROBOT_JOINTS_SYNC_EVENT,        /* 关节同步事件：同步机械臂关节状态 */
@@ -204,6 +207,7 @@ void robot_cmd_send_from_isr(char *cmd, enum cmd_type type);
 int robot_send_rel_rotate_event(uint8_t joint_id, float angle);
 int robot_send_auto_event(struct position *pos);
 int robot_send_reset_event(bool hard_reset);
+int robot_send_joint_reset_event(uint8_t joint_id, bool hard_reset);
 int robot_send_abs_rotate_event(uint8_t joint_id, float angle);
 int robot_send_remote_event(void);
 int robot_send_time_func_event(float time_limit_ms);

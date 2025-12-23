@@ -87,8 +87,11 @@ struct robot {
 | `ROBOT_LIMIT_SWITCH_EVENT` | 限位开关触发事件 |
 | `ROBOT_AUTO_EVENT` | 自动运动：指定末端位置，算法自动计算各关节角度 |
 | `ROBOT_TIMIE_FUNC_EVENT` | 时间函数事件：末端按时间函数P(t)运动 |
-| `ROBOT_HARD_RESET_EVENT` | 硬件复位：使用限位开关将机械臂复位到初始位置 |
-| `ROBOT_SOFT_RESET_EVENT` | 软件复位：基于编码器反馈将机械臂复位 |
+| `ROBOT_HARD_RESET_EVENT` | 硬件复位：使用限位开关将所有关节复位到初始位置 |
+| `ROBOT_SOFT_RESET_EVENT` | 软件复位：基于编码器反馈将所有关节复位 |
+| `ROBOT_JOINT_HARD_RESET_EVENT` | 单关节硬件复位：使用限位开关将指定关节复位 |
+| `ROBOT_JOINT_SOFT_RESET_EVENT` | 单关节软件复位：基于编码器反馈将指定关节复位 |
+| `ROBOT_READ_STATUS_EVENT` | 读取电机状态：读取指定关节的所有状态参数 |
 | `ROBOT_REMOTE_CONTROL_EVENT` | 远程控制：根据手柄指令实时控制机械臂 |
 | `ROBOT_JOINTS_SYNC_EVENT` | 关节同步：同步机械臂关节状态 |
 
@@ -255,10 +258,16 @@ DH参数说明: `[a_i, α_i, d_i, θ_i]`
 | `remote_enable` | 无 | 启用远程手柄控制模式 |
 | `remote_disable` | 无 | 禁用远程控制模式 |
 | `remote_event` | vx vy rx ry lt rt | 远程控制速度指令 |
-| `rel_rotate` | joint_id angle | 相对旋转指定关节 |
+| `rel_rotate` | joint_id angle | 相对旋转指定关节（带角度范围检查） |
+| `abs_rotate` | joint_id angle | 绝对旋转到指定角度（带角度范围检查） |
 | `auto` | x y z | 自动运动到目标位置 |
-| `hard_reset` | 无 | 硬件复位 (使用限位开关) |
-| `soft_reset` | 无 | 软件复位 (基于编码器) |
+| `hard_reset` | 无 | 硬件复位所有关节 (使用限位开关) |
+| `soft_reset` | 无 | 软件复位所有关节 (基于编码器) |
+| `joint_hard_reset` | joint_id | 硬件复位单个关节 (使用限位开关) |
+| `joint_soft_reset` | joint_id | 软件复位单个关节 (基于编码器) |
+| `read_angle` | joint_id | 读取指定关节的当前角度 |
+| `read_all_angles` | 无 | 读取所有关节的当前角度 |
+| `read_status` | joint_id | 读取指定关节的所有状态参数 |
 | `zero` | 无 | 将所有关节编码器清零 |
 
 #### 2.5.2 MQTT命令格式
@@ -301,7 +310,20 @@ int esp8266_publish_message(const char *topic, const char *message,
 
 ### 2.7 限位开关与复位系统
 
-#### 2.7.1 限位开关中断处理
+#### 2.7.1 限位开关硬件接线
+
+**接线方式**: NC (常闭) → GPIO, C (公共端) → GND
+
+**电气逻辑**:
+- 未触发（NC导通）: GPIO = LOW (GND)
+- 触发时（NC断开）: GPIO = HIGH (内部上拉)
+
+**GPIO配置**:
+- 模式: `GPIO_MODE_IT_RISING_FALLING` (上升沿和下降沿中断)
+- 上拉: `GPIO_PULLUP` (启用内部上拉电阻)
+- 端口: GPIOD (PD0-PD5)
+
+#### 2.7.2 限位开关中断处理
 
 ```c
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -314,19 +336,33 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 }
 ```
 
-#### 2.7.2 硬件复位流程 (`robot_joint_hard_reset`)
+**安全保护机制**:
+- ✅ 限位开关在系统初始化时**全部启用**
+- ✅ 在所有电机运动过程中**始终保持启用状态**
+- ✅ 触发后立即从中断中停止电机，确保快速响应
+- ✅ 防抖处理避免重复触发
+
+#### 2.7.3 硬件复位流程 (`robot_joint_hard_reset`)
+
+#### 2.7.4 硬件复位流程 (`robot_joint_hard_reset`)
 
 ```
 对于每个关节 (从关节5到关节0):
-  1. 使能限位开关中断
-  2. 读取当前限位状态
-  3. 如果未触发，向复位方向旋转
+  1. 读取当前限位状态
+  2. 如果已触发：清零编码器，清除限位状态标志，返回
+  3. 如果未触发：向复位方向旋转
   4. 等待限位开关触发
   5. 停止电机并清零编码器
-  6. 恢复关节初始角度
+  6. 立即清除限位状态标志（不依赖异步事件处理）
+  7. 恢复关节初始角度
 ```
 
-#### 2.7.3 软件复位流程 (`robot_joint_soft_reset`)
+**重要改进**：
+- 限位开关在系统启动时已全局启用，运行期间始终保持启用
+- 复位完成后**立即清除**限位状态标志，确保后续运动不受影响
+- 不依赖异步事件处理，避免事件队列阻塞导致的状态延迟
+
+#### 2.7.5 软件复位流程 (`robot_joint_soft_reset`)
 
 ```
 对于每个关节 (从关节5到关节0):
@@ -423,8 +459,8 @@ main()
 
 | 标志位 | 说明 |
 |--------|------|
-| `ROBOT_STATUS_LIMIT_ENABLE` | 限位开关使能 |
-| `ROBOT_STATUS_LIMIT_HAPPENED` | 限位开关已触发 |
+| `ROBOT_STATUS_LIMIT_ENABLE` | 限位开关使能（系统启动时自动设置，运行期间始终保持） |
+| `ROBOT_STATUS_LIMIT_HAPPENED` | 限位开关已触发（用于防抖和事件处理） |
 | `ROBOT_STATUS_READY` | 当前运动已完成 |
 | `ROBOT_STATUS_RMODE_ENABLE` | 远程控制模式使能 |
 | `ROBOT_STATUS_MQTT_CONNECTED` | MQTT连接状态 |
@@ -475,8 +511,26 @@ robot/
 ### 6.1 串口命令控制
 
 ```bash
-# 软件复位机械臂到初始位置
+# 软件复位所有关节到初始位置
 soft_reset
+
+# 硬件复位所有关节（使用限位开关）
+hard_reset
+
+# 单关节软件复位（关节0）
+joint_soft_reset 0
+
+# 单关节硬件复位（关节1）
+joint_hard_reset 1
+
+# 读取关节0的当前角度
+read_angle 0
+
+# 读取所有关节的当前角度
+read_all_angles
+
+# 读取关节0的所有状态参数（位置、速度、电流、电压、标志位等）
+read_status 0
 
 # 关节1相对旋转30度
 rel_rotate 0 30
